@@ -13,7 +13,6 @@ from sklearn.preprocessing import MinMaxScaler
 from statistics import mean
 import numpy as np
 
-
 class StockTrader:
 
     '''StockTrader Constructor. Takes in the Alpaca API key, secret key, and tickers to be used to instantiate the object.
@@ -52,16 +51,17 @@ class StockTrader:
       self.trading_client.submit_order(order_data=order_details)
 
 
-    '''Gets the last closing price for each specified ticker
-       We will be using this to determine the number of shares 
-       to purchase with $5000'''
-    def get_last_closing_price(self):
-      closing_prices = {}
+    '''Gets the last opening price for each ticker
+       Which we will use later to determine the quantity
+       of stocks to purchase'''
+    def get_last_opening_price(self):
+      opening_prices = {}
       for ticker in self.tickers:
-          closing_prices_df = self.rest_client.get_bars(ticker, TimeFrame.Day, "2023-01-01").df
-          data = closing_prices_df['close'].values[-1]
-          closing_prices[ticker] = data
-      return closing_prices
+          opening_prices_df = self.rest_client.get_bars(ticker, TimeFrame.Day, "2023-01-01").df
+          data = opening_prices_df['open'].values[-1]
+          opening_prices[ticker] = data
+
+      return opening_prices
 
 
     def create_datasets(self, dataset, time_step):
@@ -97,7 +97,7 @@ class StockTrader:
         self.model.add(LSTM(units = 100, activation = 'sigmoid', return_sequences = True, input_shape=(100,1)))
         self.model.add(LSTM(units = 100, activation = 'sigmoid', return_sequences = True))
         self.model.add(LSTM(units = 100, activation ='sigmoid', return_sequences = True))
-        self.model.add(LSTM(units = 100, activation ='sigmoid', return_sequences = True))
+        self.model.add(LSTM(units = 100, activation ='sigmoid', return_sequences = False))
         self.model.add(Dense(1))
         self.model.compile(optimizer = 'adam', loss = 'mean_squared_error')
 
@@ -121,15 +121,15 @@ class StockTrader:
               x_input = np.array(temp_input).reshape(1, len(temp_input), 1)
 
           yhat = self.model.predict(x_input)
-          temp_input.extend(yhat[0].astype('float32').tolist())
-          lst_output.extend(yhat[0].astype('float32').tolist())
+          temp_input.append(yhat[0].astype('float32').tolist())
+          lst_output.append(yhat[0])
           i=i+1
       return lst_output
 
 
     '''Creates the training and testing datasets using normalized prices for each ticker
        Stores the predictions for the next 10 closing prices in output
-       Purchases $5000 worth of shares of the specified stock if the average of the predicted 10 day
+       Purchases 100 shares of the specified stock If the average of the predicted 10 day
        moving average is higher than the current 10 day moving average'''
     def create_predictions(self):
           predictors, targets = self.get_prices()
@@ -148,10 +148,10 @@ class StockTrader:
             output = self.train_and_predict(X_train, X_test, y_train, y_test, ticker)
             outputs = [item for sublist in output for item in sublist]
 
-            if mean(outputs[-10:]) > mean(targets[ticker][-10:]):
-              qty = int(5000 / self.get_last_closing_price()[ticker][-1])
+            if mean(outputs) > mean(targets[ticker][-10:].flatten()):
+              qty = int(50000 / self.get_last_opening_price()[ticker])
               self.create_long_trade(ticker, qty)
 
             else:
-              qty = int(5000 / self.get_last_closing_price()[ticker][-1])
+              qty = int(50000 / self.get_last_opening_price()[ticker])
               self.create_short_trade(ticker, qty)
